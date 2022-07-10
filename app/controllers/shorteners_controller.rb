@@ -1,25 +1,54 @@
 class ShortenersController < ApplicationController
-  before_action :set_shortener, only: [:show, :update, :destroy]
+  before_action :set_shortener, only: [:update, :destroy]
 
   # GET /shorteners
   def index
-    @shorteners = Shortener.all
+    visitor_count = VisitorCount.first
+    visitor_count.update count: visitor_count.count + 1 if visitor_count.present?
 
-    json_response data: @shorteners
+    visitor_count = VisitorCount.create! count: 1 unless visitor_count.present?
+
+    @shorteners = []
+
+    Shortener.find_each do |short|
+      @shorteners << short if short.try(:is_active) == true && short.try(:is_deleted) == false
+    end
+
+    json_response data: {
+      count: Shortener.total_count,
+      total_clicks: Shortener.total_clicks,
+      visitor_count: visitor_count.count,
+      links: ShortenersSerializer.new(@shorteners).serializable_hash[:data],
+    }
   end
 
   # GET /shorteners/1
   def show
-    json_response data: @shortener
+    # json_response data: @shortener
+
+    # if params[:shortcode]
+    @shortener = Shortener.find_by(shortcode: params[:id])
+    if @shortener
+      @shortener.update(last_accessed: Time.now, access_count: @shortener.access_count + 1)
+      redirect_to @shortener.url
+    else
+      # render plain: "Invalid link", status: :unprocessable_entity
+      # json_response({ err_message: "Invalid link" }, :unprocessable_entity)
+      raise ExceptionHandler::InvalidAction, "invalid link"
+    end
+    # else
+    #   render plain: "Welcome to shortster"
+    # end
   end
 
   # POST /shorteners
   def create
-    @shortener.shortcode = Shortener.generate_shortcode if params[:shortcode].nil?
     @shortener = Shortener.new(shortener_params)
+    @shortener.shortcode = Shortener.generate_shortcode if shortener_params[:shortcode].blank?
 
     if @shortener.save
-      json_response data: @shortener, status: :created, location: @shortener
+      data = ShortenersSerializer.new(@shortener).serializable_hash[:data]
+      json_response data: data, status: :created
     else
       json_response data: @shortener.errors, status: :unprocessable_entity
     end
@@ -27,8 +56,9 @@ class ShortenersController < ApplicationController
 
   # PATCH/PUT /shorteners/1
   def update
+    raise ExceptionHandler::InvalidAction, "invalid link id" unless @shortener.present?
     if @shortener.update(shortener_params)
-      json_response data: @shortener
+      json_response({ data: ShortenersSerializer.new(@shortener).serializable_hash[:data], message: "link updated" })
     else
       json_response data: @shortener.errors, status: :unprocessable_entity
     end
@@ -36,18 +66,20 @@ class ShortenersController < ApplicationController
 
   # DELETE /shorteners/1
   def destroy
-    @shortener.destroy
+    @shortener.update(is_deleted: true)
+
+    json_response({ message: "link deleted" })
   end
 
   private
 
   # Use callbacks to share common setup or constraints between actions.
   def set_shortener
-    @shortener = Shortener.find(params[:id])
+    @shortener = Shortener.find_by(id: params[:id], is_deleted: false, is_active: true, is_disabled: false)
   end
 
   # Only allow a list of trusted parameters through.
   def shortener_params
-    params.fetch(:data, {})
+    params.require(:data).permit(:url, :title, :shortcode)
   end
 end
