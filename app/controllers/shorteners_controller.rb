@@ -68,7 +68,9 @@ class ShortenersController < ApplicationController
   def destroy
     @shortener.update(is_deleted: true)
 
-    json_response({ message: "link deleted" })
+    json_response({ data: {
+      id: @shortener.id,
+    }, message: "link deleted" })
   end
 
   private
